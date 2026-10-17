@@ -5,6 +5,11 @@
 # requirements.txt: leffa_utils/densepose_predictor.py hard-imports `detectron2` and `densepose`,
 # so we compile detectron2 (CUDA ops) + its DensePose project from source here. The devel base
 # image ships nvcc; FORCE_CUDA + a bounded arch list build the ops without a GPU present in CI.
+#
+# diffusers is pinned to 0.26.3: Leffa's vendored UNet (leffa/diffusion_model/*) imports
+# `diffusers.models.transformers.dual_transformer_2d`, the subpackage layout introduced in 0.26,
+# while still relying on the 0.26-era re-exports in diffusers.models.resnet / diffusers.loaders.
+#
 # Checkpoints (SD-inpaint + virtual_tryon.pth + densepose/humanparsing/openpose) download once to
 # the network volume at runtime (LEFFA_CKPT), cached thereafter.
 FROM runpod/pytorch:2.1.1-py3.10-cuda12.1.1-devel-ubuntu22.04
@@ -29,23 +34,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Leffa code: leffa/ (model, inference, transform), leffa_utils/ (densepose, masks), preprocess/.
 RUN git clone --depth 1 https://github.com/franciszzj/Leffa.git /Leffa
 
-# numpy MUST stay 1.x (torch 2.1.1 built against numpy 1; numpy 2 breaks torch.from_numpy).
-RUN pip install --no-cache-dir \
-      "numpy==1.26.4" \
-      runpod hf_transfer "huggingface_hub>=0.23,<1.0" \
-      "diffusers==0.25.1" "transformers==4.36.2" "accelerate==0.25.0" "peft==0.8.2" \
-      safetensors einops omegaconf fvcore cloudpickle pycocotools scikit-image scipy timm \
-      onnxruntime-gpu opencv-python-headless pillow matplotlib torchmetrics av regex==2024.5.15
-
-# sanity 1: numpy stayed 1.x and torch<->numpy interop works
+# Pin numpy to 1.x BEFORE compiling detectron2 so the CUDA ext links the numpy-1 ABI
+# (torch 2.1.1 is built against numpy 1; numpy 2 breaks torch.from_numpy and detectron2).
+RUN pip install --no-cache-dir "numpy==1.26.4"
 RUN python -c "import numpy,torch; assert numpy.__version__.startswith('1.'); assert int(torch.from_numpy(numpy.arange(3)).sum())==3; print('numpy',numpy.__version__,'torch',torch.__version__,'OK')"
 
-# detectron2 core (compiles CUDA ops) + the DensePose project (pure-python on top of it).
+# detectron2 core (compiles CUDA ops ~10min) + the DensePose project (pure-python on top of it).
+# Kept ahead of the churnier deps below so GHA layer cache can reuse this expensive layer.
 # --no-deps on DensePose so pip does not try to re-resolve/replace detectron2 or numpy.
 RUN pip install --no-cache-dir "git+https://github.com/facebookresearch/detectron2.git"
 RUN pip install --no-cache-dir --no-deps "git+https://github.com/facebookresearch/detectron2.git#subdirectory=projects/DensePose"
 
-# sanity 2: report EVERY broken Leffa/densepose import in one pass (so one rebuild shows them all)
+# Remaining deps. Versions chosen to match Leffa's diffusers-0.26 era (see header note).
+RUN pip install --no-cache-dir \
+      runpod hf_transfer "huggingface_hub==0.23.4" \
+      "diffusers==0.26.3" "transformers==4.38.2" "accelerate==0.27.2" "peft==0.9.0" \
+      safetensors einops omegaconf fvcore cloudpickle pycocotools scikit-image scipy timm \
+      onnxruntime-gpu opencv-python-headless pillow matplotlib torchmetrics av regex==2024.5.15
+
+# sanity: report EVERY broken detectron2/densepose/Leffa import in one pass (so one rebuild shows them all)
 COPY sanity.py /sanity.py
 RUN python /sanity.py
 

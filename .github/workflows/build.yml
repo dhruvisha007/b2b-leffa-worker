@@ -32,3 +32,5 @@ jobs:
             ghcr.io/dhruvisha007/b2b-leffa-worker:latest
             ghcr.io/dhruvisha007/b2b-leffa-worker:${{ github.sha }}
           provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -37,7 +37,19 @@ def _ensure_ckpts():
     from huggingface_hub import snapshot_download
     marker = os.path.join(CKPT, "virtual_tryon.pth")
     if not os.path.exists(marker):
-        snapshot_download(repo_id="franciszzj/Leffa", local_dir=CKPT)
+        # Only the pieces this worker uses (skip the ~7GB SDXL-inpainting variant we never load).
+        snapshot_download(
+            repo_id="franciszzj/Leffa",
+            local_dir=CKPT,
+            local_dir_use_symlinks=False,
+            allow_patterns=[
+                "virtual_tryon.pth",
+                "densepose/*",
+                "humanparsing/*",
+                "openpose/*",
+                "stable-diffusion-inpainting/*",
+            ],
+        )
 
 
 def _load():
@@ -111,7 +123,8 @@ def handler(event):
         data = {"src_image": [src], "ref_image": [ref], "mask": [mask], "densepose": [densepose]}
         data = LeffaTransform()(data)
 
-        out = _vt.inference(data, num_inference_steps=steps, guidance_scale=scale, seed=seed)
+        # LeffaInference exposes __call__ (no .inference method) — call the instance directly.
+        out = _vt(data, num_inference_steps=steps, guidance_scale=scale, seed=seed, repaint=False)
         gen = out["generated_image"][0]
         return {"image": _img_to_b64(gen)}
     except Exception as e:

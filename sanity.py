@@ -11,6 +11,7 @@ CHECKS = [
     ("leffa.transform", "LeffaTransform"),
     ("leffa_utils.densepose_predictor", "DensePosePredictor"),
     ("leffa_utils.utils", "resize_and_center"),
+    ("leffa_utils.utils", "get_agnostic_mask_hd"),
     ("preprocess.humanparsing.run_parsing", "Parsing"),
     ("preprocess.openpose.run_openpose", "OpenPose"),
 ]
