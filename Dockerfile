@@ -46,7 +46,11 @@ RUN pip install --no-cache-dir "git+https://github.com/facebookresearch/detectro
 RUN pip install --no-cache-dir --no-deps "git+https://github.com/facebookresearch/detectron2.git#subdirectory=projects/DensePose"
 
 # Remaining deps. Versions chosen to match Leffa's diffusers-0.26 era (see header note).
+# numpy==1.26.4 is RE-PINNED here so this resolution can't upgrade it to 2.x (scikit-image/scipy
+# etc. otherwise pull numpy 2, which breaks torch 2.1.1's torch.from_numpy at runtime — the
+# "Numpy is not available" failure detectron2 hits when loading the DensePose weights).
 RUN pip install --no-cache-dir \
+      "numpy==1.26.4" \
       runpod hf_transfer "huggingface_hub==0.23.4" \
       "diffusers==0.26.3" "transformers==4.38.2" "accelerate==0.27.2" "peft==0.9.0" \
       safetensors einops omegaconf fvcore cloudpickle pycocotools scikit-image scipy timm \

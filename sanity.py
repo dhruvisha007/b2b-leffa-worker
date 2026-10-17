@@ -17,6 +17,20 @@ CHECKS = [
 ]
 
 failed = False
+
+# ABI guard: torch 2.1.1 is built against numpy 1.x. A later pip step must not have pulled numpy 2,
+# or torch.from_numpy raises "Numpy is not available" at runtime (detectron2 DensePose weight load).
+try:
+    import numpy, torch
+    assert numpy.__version__.startswith("1."), f"numpy must stay 1.x, got {numpy.__version__}"
+    assert int(torch.from_numpy(numpy.arange(3)).sum()) == 3
+    print(f"OK   numpy ABI ({numpy.__version__}) + torch.from_numpy")
+except Exception:
+    failed = True
+    print("FAIL numpy/torch ABI")
+    traceback.print_exc()
+    print("-" * 60)
+
 for mod, attr in CHECKS:
     try:
         m = __import__(mod, fromlist=[attr])
