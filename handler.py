@@ -19,7 +19,7 @@ import base64
 import traceback
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 import runpod
 
 sys.path.insert(0, "/Leffa")  # cloned in the Dockerfile
@@ -92,6 +92,24 @@ def _img_to_b64(img):
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _composite_back(orig, gen, mask):
+    """Paste Leffa's garment region back onto the ORIGINAL full-res photo so the output keeps the
+    input's exact size, framing, background and brightness — only the masked clothing changes.
+    resize_and_center() does fit+white-pad (no crop), so the person occupies a known centered box
+    in the 768x1024 space; invert that box to map the result + mask back to the original."""
+    W, H = orig.size
+    scale = min(1024.0 / H, 768.0 / W)
+    new_w = max(1, int(W * scale))
+    new_h = max(1, int(H * scale))
+    top = (1024 - new_h) // 2
+    left = (768 - new_w) // 2
+    box = (left, top, left + new_w, top + new_h)
+    gen_c = gen.crop(box).resize((W, H), Image.LANCZOS)
+    m = mask.convert("L").crop(box).resize((W, H), Image.LANCZOS)
+    m = m.filter(ImageFilter.GaussianBlur(radius=max(1, W // 300)))  # feather the seam
+    return Image.composite(gen_c, orig.convert("RGB"), m)
+
+
 def handler(event):
     try:
         inp = event.get("input", {}) or {}
@@ -126,6 +144,10 @@ def handler(event):
         # LeffaInference exposes __call__ (no .inference method) — call the instance directly.
         out = _vt(data, num_inference_steps=steps, guidance_scale=scale, seed=seed, repaint=False)
         gen = out["generated_image"][0]
+        # Composite the garment region back onto the original photo (keeps original size/framing/
+        # brightness/background). Set composite:false to get the raw 768x1024 generation instead.
+        if inp.get("composite", True):
+            gen = _composite_back(person, gen, mask)
         return {"image": _img_to_b64(gen)}
     except Exception as e:
         return {"error": str(e), "trace": traceback.format_exc()[-1800:]}
