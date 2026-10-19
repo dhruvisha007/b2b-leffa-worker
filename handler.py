@@ -92,6 +92,40 @@ def _img_to_b64(img):
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _clip_mask_by_length(mask, keypoints, length):
+    """Garment-length-aware masking: clip the agnostic mask below a body-keypoint-anchored line so a
+    SHORT garment can't be stretched to the model's full-length-pants mask. `length` is the garment's
+    intended length. Keypoints are COCO-18 in the mask's own (384x512) space: hips=8,11 knees=9,12
+    ankles=10,13. 'long'/'maxi'/'full'/'pants'/None keep the mask as-is (down to the ankles)."""
+    if not length or length in ("long", "maxi", "full", "pants", "lower_body"):
+        return mask
+    try:
+        kp = np.array(keypoints["pose_keypoints_2d"], dtype=float).reshape(-1, 2)
+    except Exception:
+        return mask
+    H = mask.size[1]  # 512
+
+    def ymean(idxs):
+        ys = [kp[i][1] for i in idxs if i < len(kp) and not (kp[i][0] == 0 and kp[i][1] == 0)]
+        return float(np.mean(ys)) if ys else None
+
+    hip = ymean([8, 11]) or 0.55 * H
+    knee = ymean([9, 12]) or 0.75 * H
+    ank = ymean([10, 13]) or 0.95 * H
+    if length in ("short", "mini"):
+        cut = hip + 0.45 * (knee - hip)      # mid-thigh
+    elif length == "knee":
+        cut = knee
+    elif length == "midi":
+        cut = knee + 0.5 * (ank - knee)      # mid-calf
+    else:
+        return mask
+    cut = int(max(0, min(H, cut)))
+    arr = np.array(mask)
+    arr[cut:, :] = 0                         # unmask everything below the hemline
+    return Image.fromarray(arr)
+
+
 def _composite_back(orig, gen, mask):
     """Paste Leffa's garment region back onto the ORIGINAL full-res photo so the output keeps the
     input's exact size, framing, background and brightness — only the masked clothing changes.
@@ -119,6 +153,7 @@ def handler(event):
         person = _b64_to_img(inp["person"])
         garment = _b64_to_img(inp["garment"])
         gtype = inp.get("garment_type", "upper_body")
+        length = inp.get("length")  # top|short|mini|knee|midi|long|maxi|full — clips the mask hemline
         steps = int(inp.get("steps", 30))
         scale = float(inp.get("guidance_scale", 2.5))
         seed = int(inp.get("seed", 42))
@@ -133,6 +168,7 @@ def handler(event):
         model_parse, _ = _parsing(src.resize((384, 512)))
         keypoints = _openpose(src.resize((384, 512)))
         mask = get_agnostic_mask_hd(model_parse, keypoints, gtype)
+        mask = _clip_mask_by_length(mask, keypoints, length)  # garment-length-aware hemline
         mask = mask.resize((768, 1024))
 
         seg = _densepose.predict_seg(np.array(src))[:, :, ::-1]
