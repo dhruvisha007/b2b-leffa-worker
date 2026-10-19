@@ -126,6 +126,36 @@ def _clip_mask_by_length(mask, keypoints, length):
     return Image.fromarray(arr)
 
 
+def _protect_hands(mask, keypoints, radius_scale=0.5):
+    """Keep the model's ORIGINAL hands: zero the mask in a disk around each hand (just beyond the
+    wrist) so Leffa doesn't regenerate them — SD mangles fingers. The sleeves still cover the arms
+    (only the hand tip is excluded). COCO-18 in 384x512 space: RElbow=3 RWrist=4, LElbow=6 LWrist=7."""
+    try:
+        kp = np.array(keypoints["pose_keypoints_2d"], dtype=float).reshape(-1, 2)
+    except Exception:
+        return mask
+    arr = np.array(mask)
+    H, W = arr.shape[:2]
+    yy, xx = np.ogrid[:H, :W]
+
+    def ok(i):
+        return i < len(kp) and not (kp[i][0] == 0 and kp[i][1] == 0)
+
+    for elb, wr in ((3, 4), (6, 7)):
+        if not (ok(elb) and ok(wr)):
+            continue
+        ex, ey = kp[elb]
+        wx, wy = kp[wr]
+        fore = ((wx - ex) ** 2 + (wy - ey) ** 2) ** 0.5
+        if fore < 1:
+            continue
+        cx = wx + 0.30 * (wx - ex)   # hand centre a bit past the wrist
+        cy = wy + 0.30 * (wy - ey)
+        r = max(12.0, radius_scale * fore)
+        arr[(xx - cx) ** 2 + (yy - cy) ** 2 <= r * r] = 0
+    return Image.fromarray(arr)
+
+
 def _composite_back(orig, gen, mask, enhance=True,
                     sharpen=90, color=1.16, contrast=1.08, bright=1.0):
     """Paste Leffa's garment region back onto the ORIGINAL full-res photo so the output keeps the
@@ -183,6 +213,8 @@ def handler(event):
         keypoints = _openpose(src.resize((384, 512)))
         mask = get_agnostic_mask_hd(model_parse, keypoints, gtype)
         mask = _clip_mask_by_length(mask, keypoints, length)  # garment-length-aware hemline
+        if inp.get("protect_hands", True):
+            mask = _protect_hands(mask, keypoints, float(inp.get("hand_radius", 0.5)))
         mask = mask.resize((768, 1024))
 
         seg = _densepose.predict_seg(np.array(src))[:, :, ::-1]
