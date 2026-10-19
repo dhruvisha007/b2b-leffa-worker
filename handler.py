@@ -285,7 +285,7 @@ def _composite_back(orig, gen, mask, enhance=True,
     return Image.composite(gen_c, orig.convert("RGB"), m)
 
 
-def _tryon_once(person, garment_ref, gtype, length, steps, scale, seed, inp):
+def _tryon_once(person, garment_ref, gtype, length, steps, scale, seed, inp, sleeved=True):
     """One Leffa pass for a single region (gtype) and composite it back onto `person`.
     Returns the composited PIL (same size as `person`), ready to be fed into the next pass."""
     from leffa.transform import LeffaTransform
@@ -301,6 +301,18 @@ def _tryon_once(person, garment_ref, gtype, length, steps, scale, seed, inp):
     if inp.get("protect_hands", True):
         mask = _protect_hands(mask, keypoints, float(inp.get("hand_radius", 0.28)))
     mask = mask.resize((768, 1024))
+
+    # Sleeveless top/dress: the upper mask includes the arms, so Leffa would paint garment onto the
+    # BARE arms (junk). Keep the model's original arms by removing the arm pixels from the mask.
+    if (not sleeved) and gtype in ("upper_body", "dresses") and inp.get("sleeve_aware", True):
+        try:
+            pseg = _segment(src)                       # person segmentation at 768x1024
+            arms = np.isin(pseg, [14, 15])             # segformer left-arm / right-arm
+            marr = np.array(mask)
+            marr[arms] = 0
+            mask = Image.fromarray(marr)
+        except Exception:
+            pass
 
     seg = _densepose.predict_seg(np.array(src))[:, :, ::-1]
     densepose = Image.fromarray(seg)
@@ -345,6 +357,13 @@ def handler(event):
         if gseg is not None and inp.get("clean_garment", True):
             garment_ref = _isolate_crop(garment, gseg)
 
+        # Sleeve detection: few bare-arm pixels relative to the top's size → the top is sleeved.
+        sleeved = True
+        if gseg is not None:
+            up_px = int(np.isin(gseg, [4, 7]).sum())
+            arm_px = int(np.isin(gseg, [14, 15]).sum())
+            sleeved = not (up_px > 50 and arm_px < 0.35 * up_px)
+
         # Decide the pass(es): explicit garment_type wins; else auto-route from the garment.
         if inp.get("garment_type"):
             passes = [(inp["garment_type"], inp.get("length"))]
@@ -356,7 +375,7 @@ def handler(event):
         # Run each pass, feeding the result forward (two-piece co-ord = lower then upper).
         running = person
         for gtype, length in passes:
-            running = _tryon_once(running, garment_ref, gtype, length, steps, scale, seed, inp)
+            running = _tryon_once(running, garment_ref, gtype, length, steps, scale, seed, inp, sleeved)
 
         return {"image": _img_to_b64(running), "passes": [p[0] for p in passes]}
     except Exception as e:
