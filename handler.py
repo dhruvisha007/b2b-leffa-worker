@@ -177,13 +177,15 @@ def _classify_garment(seg):
     total = up + lower + dress
     if total < 500:
         return [("dresses", None)]                      # couldn't read → safe default
-    sig = 0.12 * total
-    has_up, has_lower, has_dress = up > sig, lower > sig, dress > sig
+    # Low threshold so a SMALL top (crop tank) next to big jeans isn't missed → full look applied.
+    sig = 0.05 * total
+    has_up, has_lower = up > sig, lower > sig
+    has_dress = dress > 0.15 * total                    # a dress is a dominant single label
     low_len = None if pants >= skirt else _region_length(seg, [5])  # trousers → full length
 
     if has_dress and dress >= max(up, lower):
         return [("dresses", _region_length(seg, [7]))]
-    if has_up and has_lower:                            # full co-ord / two-piece
+    if has_up and has_lower:                            # full co-ord / two-piece look → 2 passes
         return [("lower_body", low_len), ("upper_body", None)]
     if has_up:
         return [("upper_body", None)]
