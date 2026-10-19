@@ -19,7 +19,7 @@ import base64
 import traceback
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 import runpod
 
 sys.path.insert(0, "/Leffa")  # cloned in the Dockerfile
@@ -126,11 +126,16 @@ def _clip_mask_by_length(mask, keypoints, length):
     return Image.fromarray(arr)
 
 
-def _composite_back(orig, gen, mask):
+def _composite_back(orig, gen, mask, enhance=True,
+                    sharpen=90, color=1.14, contrast=1.06, bright=1.06):
     """Paste Leffa's garment region back onto the ORIGINAL full-res photo so the output keeps the
     input's exact size, framing, background and brightness — only the masked clothing changes.
     resize_and_center() does fit+white-pad (no crop), so the person occupies a known centered box
-    in the 768x1024 space; invert that box to map the result + mask back to the original."""
+    in the 768x1024 space; invert that box to map the result + mask back to the original.
+
+    The garment region comes from Leffa's 768x1024 SD output, which is softer + slightly duller
+    than a real photo, so (when enhance) it is sharpened (unsharp) and nudged in colour/contrast/
+    brightness to match the crisp original it sits in — fixes the "dull / blurry garment" look."""
     W, H = orig.size
     scale = min(1024.0 / H, 768.0 / W)
     new_w = max(1, int(W * scale))
@@ -139,6 +144,15 @@ def _composite_back(orig, gen, mask):
     left = (768 - new_w) // 2
     box = (left, top, left + new_w, top + new_h)
     gen_c = gen.crop(box).resize((W, H), Image.LANCZOS)
+    if enhance:
+        if sharpen:
+            gen_c = gen_c.filter(ImageFilter.UnsharpMask(radius=2, percent=int(sharpen), threshold=2))
+        if color and color != 1.0:
+            gen_c = ImageEnhance.Color(gen_c).enhance(float(color))
+        if contrast and contrast != 1.0:
+            gen_c = ImageEnhance.Contrast(gen_c).enhance(float(contrast))
+        if bright and bright != 1.0:
+            gen_c = ImageEnhance.Brightness(gen_c).enhance(float(bright))
     m = mask.convert("L").crop(box).resize((W, H), Image.LANCZOS)
     m = m.filter(ImageFilter.GaussianBlur(radius=max(1, W // 300)))  # feather the seam
     return Image.composite(gen_c, orig.convert("RGB"), m)
@@ -183,7 +197,14 @@ def handler(event):
         # Composite the garment region back onto the original photo (keeps original size/framing/
         # brightness/background). Set composite:false to get the raw 768x1024 generation instead.
         if inp.get("composite", True):
-            gen = _composite_back(person, gen, mask)
+            gen = _composite_back(
+                person, gen, mask,
+                enhance=bool(inp.get("enhance", True)),
+                sharpen=inp.get("q_sharpen", 90),
+                color=float(inp.get("q_color", 1.14)),
+                contrast=float(inp.get("q_contrast", 1.06)),
+                bright=float(inp.get("q_bright", 1.06)),
+            )
         return {"image": _img_to_b64(gen)}
     except Exception as e:
         return {"error": str(e), "trace": traceback.format_exc()[-1800:]}
