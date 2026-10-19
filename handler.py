@@ -126,7 +126,7 @@ def _clip_mask_by_length(mask, keypoints, length):
     return Image.fromarray(arr)
 
 
-def _protect_hands(mask, keypoints, radius_scale=0.5):
+def _protect_hands(mask, keypoints, radius_scale=0.28):
     """Keep the model's ORIGINAL hands: zero the mask in a disk around each hand (just beyond the
     wrist) so Leffa doesn't regenerate them — SD mangles fingers. The sleeves still cover the arms
     (only the hand tip is excluded). COCO-18 in 384x512 space: RElbow=3 RWrist=4, LElbow=6 LWrist=7."""
@@ -214,7 +214,7 @@ def handler(event):
         mask = get_agnostic_mask_hd(model_parse, keypoints, gtype)
         mask = _clip_mask_by_length(mask, keypoints, length)  # garment-length-aware hemline
         if inp.get("protect_hands", True):
-            mask = _protect_hands(mask, keypoints, float(inp.get("hand_radius", 0.5)))
+            mask = _protect_hands(mask, keypoints, float(inp.get("hand_radius", 0.28)))
         mask = mask.resize((768, 1024))
 
         seg = _densepose.predict_seg(np.array(src))[:, :, ::-1]
