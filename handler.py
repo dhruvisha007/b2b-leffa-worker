@@ -127,7 +127,7 @@ def _clip_mask_by_length(mask, keypoints, length):
 
 
 def _composite_back(orig, gen, mask, enhance=True,
-                    sharpen=90, color=1.14, contrast=1.06, bright=1.06):
+                    sharpen=90, color=1.16, contrast=1.08, bright=1.0):
     """Paste Leffa's garment region back onto the ORIGINAL full-res photo so the output keeps the
     input's exact size, framing, background and brightness — only the masked clothing changes.
     resize_and_center() does fit+white-pad (no crop), so the person occupies a known centered box
@@ -201,9 +201,9 @@ def handler(event):
                 person, gen, mask,
                 enhance=bool(inp.get("enhance", True)),
                 sharpen=inp.get("q_sharpen", 90),
-                color=float(inp.get("q_color", 1.14)),
-                contrast=float(inp.get("q_contrast", 1.06)),
-                bright=float(inp.get("q_bright", 1.06)),
+                color=float(inp.get("q_color", 1.16)),
+                contrast=float(inp.get("q_contrast", 1.08)),
+                bright=float(inp.get("q_bright", 1.0)),  # no global brightness: avoids a bg halo in the mask
             )
         return {"image": _img_to_b64(gen)}
     except Exception as e:
